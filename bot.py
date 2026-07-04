@@ -37,7 +37,7 @@ async def on_member_join(member: discord.Member):
         return
     embed = base_embed("Member Joined", discord.Color.green())
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
+    embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
     embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, "R"))
     await ch.send(embed=embed)
 
@@ -56,7 +56,7 @@ async def on_member_remove(member: discord.Member):
 
     if kicked_by:
         embed = base_embed("Member Kicked", discord.Color.orange())
-        embed.add_field(name="User", value=f"{member} ({member.id})", inline=False)
+        embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
         embed.add_field(name="Kicked By", value=str(kicked_by))
     else:
         embed = base_embed("Member Left", discord.Color.red())
@@ -80,7 +80,7 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
             break
 
     embed = base_embed("Member Banned", discord.Color.dark_red())
-    embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
+    embed.add_field(name="User", value=f"<@{user.id}> ({user} - {user.id})", inline=False)
     if banned_by:
         embed.add_field(name="Banned By", value=str(banned_by))
     if reason:
@@ -94,7 +94,7 @@ async def on_member_unban(guild: discord.Guild, user: discord.User):
     if not ch:
         return
     embed = base_embed("Member Unbanned", discord.Color.blurple())
-    embed.add_field(name="User", value=f"{user} ({user.id})", inline=False)
+    embed.add_field(name="User", value=f"<@{user.id}> ({user} - {user.id})", inline=False)
     await ch.send(embed=embed)
 
 
@@ -115,7 +115,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
                 break
 
         embed = base_embed("Member Roles Updated", discord.Color.gold())
-        embed.add_field(name="User", value=f"{after} ({after.id})", inline=False)
+        embed.add_field(name="User", value=f"<@{after.id}> ({after} - {after.id})", inline=False)
         if added:
             embed.add_field(name="Roles Added", value=", ".join(r.mention for r in added), inline=False)
         if removed:
@@ -126,7 +126,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
     if before.nick != after.nick:
         embed = base_embed("Nickname Changed", discord.Color.light_grey())
-        embed.add_field(name="User", value=f"{after} ({after.id})", inline=False)
+        embed.add_field(name="User", value=f"<@{after.id}> ({after} - {after.id})", inline=False)
         embed.add_field(name="Before", value=before.nick or "(none)")
         embed.add_field(name="After", value=after.nick or "(none)")
         await ch.send(embed=embed)
