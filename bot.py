@@ -139,12 +139,12 @@ async def ping(ctx):
 
 @bot.command()
 async def meow(ctx):
-    if ctx.author.id == 1258819818887319658:
-        user = ctx.bot.get_user(415606064856301589)
+    if ctx.author.id == 1258819818887319658: # me :3
+        user = ctx.bot.get_user(415606064856301589) # aep
         await user.send('Meow')
-        user = ctx.bot.get_user(1258819818887319658)
+        user = ctx.bot.get_user(1258819818887319658) # sam
         await user.send('Meow')
-        user = ctx.bot.get_user(1420061774165835938)
+        user = ctx.bot.get_user(1420061774165835938) # faz
         await user.send('Meow')
         await ctx.send("Meow")
     else:
