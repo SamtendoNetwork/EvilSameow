@@ -150,8 +150,21 @@ async def meow(ctx):
     else:
         await ctx.send("lmao who are you")
 
+
+
 @bot.command()
 async def hi(ctx):
     await ctx.reply("wassup")
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason="No reason provided"):
+    try:
+        await member.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}")
+    except discord.Forbidden:
+        pass
+
+    await ctx.guild.ban(member, reason=reason)
+    await ctx.send(f"Banned {member} | Reason: {reason}")
 
 bot.run(TOKEN)
