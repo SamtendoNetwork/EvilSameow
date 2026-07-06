@@ -158,11 +158,20 @@ async def hi(ctx):
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="No reason provided", appeals=True):
-    if appeals == True:
-        apl = "You may appeal by emailing appeals@samtendo.net"
-    else:
-        apl = "You may not appeal this ban."
+async def ban(ctx, member: discord.Member, *, reason="No reason provided"):
+    apl = "You may appeal by emailing appeals@samtendo.net"
+    try:
+        await member.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+    except discord.Forbidden:
+        pass
+
+    await ctx.guild.ban(member, reason=reason)
+    await ctx.send(f"Banned {member} | Reason: {reason}")
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def hban(ctx, member: discord.Member, *, reason="No reason provided", appeals=True):
+    apl = "You may not appeal this ban."
     try:
         await member.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
