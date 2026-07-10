@@ -178,6 +178,6 @@ async def hban(ctx, member: discord.Member, *, reason="No reason provided", appe
         pass
 
     await ctx.guild.ban(member, reason=reason)
-    await ctx.send(f"Banned {member} | Reason: {reason}")
+    await ctx.send(f"No appeal ban given to {member} | Reason: {reason}")
 
 bot.run(TOKEN)
