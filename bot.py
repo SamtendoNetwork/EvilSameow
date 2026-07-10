@@ -3,11 +3,15 @@ from discord.ext import commands
 import datetime
 from dotenv import load_dotenv
 import os
+from supabase import create_client, Client
 
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 intents = discord.Intents.default()
 intents.members = True
@@ -15,6 +19,17 @@ intents.moderation = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
+
+PROTECTED_ROLE_ID = 1512466821285154917
+IMMUNE_BYPASS_ROLE_ID = 1469036732199469092
+
+def can_ban_target(author: discord.Member, target) -> bool:
+    if not isinstance(target, discord.Member):
+        return True
+    has_protected_role = any(r.id == PROTECTED_ROLE_ID for r in target.roles)
+    if not has_protected_role:
+        return True
+    return any(r.id == IMMUNE_BYPASS_ROLE_ID for r in author.roles)
 
 
 def log_channel(guild: discord.Guild):
@@ -158,26 +173,59 @@ async def hi(ctx):
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="No reason provided"):
+async def ban(ctx, user: discord.User, *, reason="No reason provided"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to ban this member.")
+        return
     apl = "You may appeal by emailing appeals@samtendo.net"
     try:
-        await member.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(member, reason=reason)
-    await ctx.send(f"Banned {member} | Reason: {reason}")
+    await ctx.guild.ban(user, reason=reason)
+    await ctx.send(f"Banned {user} | Reason: {reason}")
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
-async def hban(ctx, member: discord.Member, *, reason="No reason provided", appeals=True):
+async def hban(ctx, user: discord.User, *, reason="No reason provided"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to ban this member.")
+        return
     apl = "You may not appeal this ban."
     try:
-        await member.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(member, reason=reason)
-    await ctx.send(f"No appeal ban given to {member} | Reason: {reason}")
+    await ctx.guild.ban(user, reason=reason)
+    await ctx.send(f"No appeal ban given to {user} | Reason: {reason}")
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def kban(ctx, user: discord.User, *, reason="N/A"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to ban this member.")
+        return
+    apl = "You may appeal by emailing appeals@samtendo.net"
+    if reason == "N/A":
+        await ctx.reply("Please provide a knowledgeban reason.")
+        return
+
+    result = supabase.table("kbans").select("full").eq("shortcut", reason).execute()
+
+    if not result.data:
+        await ctx.reply("Please provide a valid knowledgeban reason. Otherwise, you should just ban them normally.")
+        return
+
+    ban_reason = result.data[0]["full"]
+
+    try:
+        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {ban_reason}\n\n{apl}")
+    except discord.Forbidden:
+        pass
+
+    await ctx.guild.ban(user, reason=ban_reason)
+    await ctx.send(f"Knowledgeban given to {user} | Reason: {ban_reason}")
 
 bot.run(TOKEN)
