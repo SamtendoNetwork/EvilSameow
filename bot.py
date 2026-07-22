@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
+import asyncio
 import datetime
+import json
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
@@ -22,6 +24,9 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 
 PROTECTED_ROLE_ID = 1512466821285154917
 IMMUNE_BYPASS_ROLE_ID = 1469036732199469092
+TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
+scheduled_unban_tasks = {}
+timed_bans_restored = False
 
 def can_ban_target(author: discord.Member, target) -> bool:
     if not isinstance(target, discord.Member):
@@ -40,9 +45,116 @@ def base_embed(title, color):
     return discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
 
 
+def parse_iso8601_timestamp(timestamp_text: str) -> datetime.datetime:
+    parsed = datetime.datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def format_full_discord_timestamp(moment: datetime.datetime) -> str:
+    return discord.utils.format_dt(moment, "F")
+
+
+def load_timed_bans() -> list[dict]:
+    if not os.path.exists(TIMED_BANS_PATH):
+        return []
+
+    with open(TIMED_BANS_PATH, "r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    if not isinstance(data, list):
+        return []
+
+    return [entry for entry in data if isinstance(entry, dict)]
+
+
+def save_timed_bans(entries: list[dict]) -> None:
+    with open(TIMED_BANS_PATH, "w", encoding="utf-8") as file:
+        json.dump(entries, file, indent=2, ensure_ascii=True)
+
+
+def add_timed_ban_entry(guild_id: int, user_id: int, unban_time: datetime.datetime, reason: str, ban_type: str) -> None:
+    entries = load_timed_bans()
+    entries = [entry for entry in entries if not (entry.get("guild_id") == guild_id and entry.get("user_id") == user_id)]
+    entries.append(
+        {
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "unban_at": int(unban_time.timestamp()),
+            "reason": reason,
+            "ban_type": ban_type,
+        }
+    )
+    save_timed_bans(entries)
+
+
+def remove_timed_ban_entry(guild_id: int, user_id: int) -> None:
+    entries = load_timed_bans()
+    filtered_entries = [entry for entry in entries if not (entry.get("guild_id") == guild_id and entry.get("user_id") == user_id)]
+    if len(filtered_entries) != len(entries):
+        save_timed_bans(filtered_entries)
+
+
+async def schedule_unban(guild: discord.Guild, user: discord.User, unban_time: datetime.datetime, reason: str):
+    task_key = (guild.id, user.id)
+    scheduled_unban_tasks.pop(task_key, None)
+    delay = (unban_time - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    try:
+        await guild.unban(user, reason=reason)
+    except discord.NotFound:
+        pass
+    finally:
+        remove_timed_ban_entry(guild.id, user.id)
+
+
+def queue_unban(guild: discord.Guild, user: discord.User, unban_time: datetime.datetime, reason: str):
+    task_key = (guild.id, user.id)
+    existing_task = scheduled_unban_tasks.get(task_key)
+    if existing_task and not existing_task.done():
+        existing_task.cancel()
+
+    scheduled_unban_tasks[task_key] = bot.loop.create_task(schedule_unban(guild, user, unban_time, reason))
+
+
+def restore_timed_bans():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for entry in load_timed_bans():
+        try:
+            guild_id = int(entry.get("guild_id"))
+            user_id = int(entry.get("user_id"))
+            unban_value = entry.get("unban_at")
+            if isinstance(unban_value, (int, float)):
+                unban_time = datetime.datetime.fromtimestamp(float(unban_value), tz=datetime.timezone.utc)
+            else:
+                unban_time = parse_iso8601_timestamp(str(unban_value))
+            reason = str(entry.get("reason", "No reason provided"))
+        except (TypeError, ValueError):
+            continue
+
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            continue
+
+        user = bot.get_user(user_id) or discord.Object(id=user_id)
+
+        if unban_time <= now:
+            bot.loop.create_task(schedule_unban(guild, user, now, reason))
+            continue
+
+        queue_unban(guild, user, unban_time, reason)
+
+
 @bot.event
 async def on_ready():
+    global timed_bans_restored
     print(f"Logged in as {bot.user} ({bot.user.id})")
+    if not timed_bans_restored:
+        restore_timed_bans()
+        timed_bans_restored = True
 
 
 @bot.event
@@ -186,6 +298,38 @@ async def ban(ctx, user: discord.User, *, reason="No reason provided"):
     await ctx.guild.ban(user, reason=reason)
     await ctx.send(f"Banned {user} | Reason: {reason}")
 
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def tban(ctx, user: discord.User, unban_at: str, *, reason="No reason provided"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to ban this member.")
+        return
+
+    try:
+        unban_time = parse_iso8601_timestamp(unban_at)
+    except ValueError:
+        await ctx.reply("Please provide a valid ISO 8601 timestamp for the unban time.")
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if unban_time <= now:
+        await ctx.reply("The unban timestamp must be in the future.")
+        return
+
+    apl = "You may appeal by emailing appeals@samtendo.net"
+    try:
+        await user.send(
+            f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\nUnban time: {format_full_discord_timestamp(unban_time)}\n\n{apl}"
+        )
+    except discord.Forbidden:
+        pass
+
+    await ctx.guild.ban(user, reason=reason)
+    add_timed_ban_entry(ctx.guild.id, user.id, unban_time, reason, "tban")
+    queue_unban(ctx.guild, user, unban_time, reason)
+    await ctx.send(f"Timed ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
+
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def hban(ctx, user: discord.User, *, reason="No reason provided"):
@@ -200,6 +344,38 @@ async def hban(ctx, user: discord.User, *, reason="No reason provided"):
 
     await ctx.guild.ban(user, reason=reason)
     await ctx.send(f"No appeal ban given to {user} | Reason: {reason}")
+
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def thban(ctx, user: discord.User, unban_at: str, *, reason="No reason provided"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to ban this member.")
+        return
+
+    try:
+        unban_time = parse_iso8601_timestamp(unban_at)
+    except ValueError:
+        await ctx.reply("Please provide a valid ISO 8601 timestamp for the unban time.")
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if unban_time <= now:
+        await ctx.reply("The unban timestamp must be in the future.")
+        return
+
+    apl = "You may not appeal this ban."
+    try:
+        await user.send(
+            f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\nUnban time: {format_full_discord_timestamp(unban_time)}\n\n{apl}"
+        )
+    except discord.Forbidden:
+        pass
+
+    await ctx.guild.ban(user, reason=reason)
+    add_timed_ban_entry(ctx.guild.id, user.id, unban_time, reason, "thban")
+    queue_unban(ctx.guild, user, unban_time, reason)
+    await ctx.send(f"Timed no appeal ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
