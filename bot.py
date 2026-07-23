@@ -22,8 +22,8 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
-PROTECTED_ROLE_ID = 1512466821285154917
-IMMUNE_BYPASS_ROLE_ID = 1469036732199469092
+PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
+IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
 timed_bans_restored = False
