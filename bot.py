@@ -284,6 +284,29 @@ async def hi(ctx):
     await ctx.reply("wassup")
 
 @bot.command()
+@commands.has_permission(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
+    if not can_ban_target(ctx.author, user):
+        await ctx.reply("You do not have permission to kick this member.")
+        return
+    try:
+        await user.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+    except discord.Forbidden:
+        pass
+    await ctx.guild.kick(member, reason=reason)
+    await ctx.send(f"Kicked {user} | Reason: {reason}")
+
+@bot.command()
+@commands.has_permission(ban_members=True)
+async def unban(ctx, user: discord.User, *, reason="No reason provided"):
+    try:
+        await ctx.guild.fetch_ban(user)
+    except discord.errors.NotFound:
+        return await ctx.send(f"{user} is not banned!")
+    await ctx.guild.unban(user, reason=reason)
+    await ctx.send(f"{user} is now unbanned. | Reason: {reason}")
+
+@bot.command()
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, user: discord.User, *, reason="No reason provided"):
     if not can_ban_target(ctx.author, user):
