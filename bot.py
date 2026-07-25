@@ -290,7 +290,7 @@ async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
         await ctx.reply("You do not have permission to kick this member.")
         return
     try:
-        await user.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+        await user.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}")
     except discord.Forbidden:
         pass
     await ctx.guild.kick(member, reason=reason)
