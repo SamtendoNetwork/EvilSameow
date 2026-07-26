@@ -286,15 +286,15 @@ async def hi(ctx):
 @bot.command()
 @commands.has_permission(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, user):
+    if not can_ban_target(ctx.author, member):
         await ctx.reply("You do not have permission to kick this member.")
         return
     try:
-        await user.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}")
+        await member.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}")
     except discord.Forbidden:
         pass
     await ctx.guild.kick(member, reason=reason)
-    await ctx.send(f"Kicked {user} | Reason: {reason}")
+    await ctx.send(f"Kicked {member} | Reason: {reason}")
 
 @bot.command()
 @commands.has_permission(ban_members=True)
