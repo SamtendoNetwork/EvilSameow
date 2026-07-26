@@ -24,6 +24,7 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 
 PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
+BOT_USER_ID = 1522945518932725810
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
 timed_bans_restored = False
@@ -284,7 +285,7 @@ async def hi(ctx):
     await ctx.reply("wassup")
 
 @bot.command()
-@commands.has_permission(kick_members=True)
+@commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
     if not can_ban_target(ctx.author, member):
         await ctx.reply("You do not have permission to kick this member.")
@@ -297,7 +298,7 @@ async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
     await ctx.send(f"Kicked {member} | Reason: {reason}")
 
 @bot.command()
-@commands.has_permission(ban_members=True)
+@commands.has_permissions(ban_members=True)
 async def unban(ctx, user: discord.User, *, reason="No reason provided"):
     try:
         await ctx.guild.fetch_ban(user)
@@ -426,5 +427,22 @@ async def kban(ctx, user: discord.User, *, reason="N/A"):
 
     await ctx.guild.ban(user, reason=ban_reason)
     await ctx.send(f"Knowledgeban given to {user} | Reason: {ban_reason}")
+
+@bot.command()
+@commands.has_any_role(IMMUNE_BYPASS_ROLE_ID)
+async def speak(ctx, *, msg="Please provide a message to send."):
+    await ctx.send(msg)
+
+@bot.command()
+@commands.has_any_role(PROTECTED_ROLE_ID)
+async def purge(ctx, limit: int):
+    if limit < 1:
+        await ctx.reply("Please provide a valid number of messages to purge.")
+        return
+    deleted = await ctx.channel.purge(
+        limit=(limit + 1),
+        check=lambda message: message.author.id != BOT_USER_ID and not message.pinned,
+    )
+    await ctx.send(f"Purged {len(deleted)} message(s), I skipped any of my own", delete_after=5)
 
 bot.run(TOKEN)
