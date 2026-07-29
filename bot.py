@@ -25,7 +25,7 @@ bot = commands.Bot(command_prefix=".", intents=intents, activity=discord.Game("E
 PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
 PROBATION_CHANNEL_ID = int(os.getenv("PROBATION_CHANNEL_ID"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+PROBATION_LOG_CHANNEL_ID = int(os.getenv("PROBATION_LOG_CHANNEL_ID"))
 PROBATION_ROLE_ID = int(os.getenv("PROBATION_ROLE_ID"))
 BOT_USER_ID = 1522945518932725810
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
@@ -44,6 +44,8 @@ def can_ban_target(author: discord.Member, target) -> bool:
 def log_channel(guild: discord.Guild):
     return guild.get_channel(LOG_CHANNEL_ID)
 
+def pro_log_channel(guild: discord.Guild):
+    return guild.get_channel(PROBATION_LOG_CHANNEL_ID)
 
 def base_embed(title, color):
     return discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
@@ -269,7 +271,7 @@ async def on_message(message: discord.Message):
         return
 
     if message.guild and message.channel.id == PROBATION_CHANNEL_ID:
-        ch = log_channel(message.guild)
+        ch = pro_log_channel(message.guild)
         if ch:
             message_text = message.content or "(no content)"
             embed = base_embed("Probation Message", discord.Color.orange())
