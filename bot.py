@@ -27,6 +27,7 @@ PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
 PROBATION_CHANNEL_ID = int(os.getenv("PROBATION_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+PROBATION_ROLE_ID = int(os.getenv("PROBATION_ROLE_ID"))
 BOT_USER_ID = 1522945518932725810
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
@@ -326,6 +327,40 @@ async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
         pass
     await ctx.guild.kick(member, reason=reason)
     await ctx.send(f"Kicked {member} | Reason: {reason}")
+
+
+@bot.command()
+@commands.has_any_role(PROTECTED_ROLE_ID)
+async def probate(ctx, member: discord.Member):
+    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+    if role is None:
+        await ctx.reply("Probation role not found.")
+        return
+
+    try:
+        await member.add_roles(role, reason=f"Probated by {ctx.author}")
+    except discord.Forbidden:
+        await ctx.reply("I do not have permission to add that role.")
+        return
+
+    await ctx.reply(f"Probated {member}.")
+
+
+@bot.command()
+@commands.has_any_role(PROTECTED_ROLE_ID)
+async def unprobate(ctx, member: discord.Member):
+    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+    if role is None:
+        await ctx.reply("Probation role not found.")
+        return
+
+    try:
+        await member.remove_roles(role, reason=f"Unprobated by {ctx.author}")
+    except discord.Forbidden:
+        await ctx.reply("I do not have permission to remove that role.")
+        return
+
+    await ctx.reply(f"Unprobated {member}.")
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
