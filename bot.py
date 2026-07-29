@@ -21,6 +21,7 @@ intents.moderation = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
+bot.change_presence(activity=discord.Game(name="Evil Simulator 2026"), status=discord.Status.online)
 
 PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
