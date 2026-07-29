@@ -20,10 +20,13 @@ intents.members = True
 intents.moderation = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=".", intents=intents)
+bot = commands.Bot(command_prefix=".", intents=intents, activity=discord.Game("Evil Simulator 2026"))
 
 PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
+PROBATION_CHANNEL_ID = int(os.getenv("PROBATION_CHANNEL_ID"))
+PROBATION_LOG_CHANNEL_ID = int(os.getenv("PROBATION_LOG_CHANNEL_ID"))
+PROBATION_ROLE_ID = int(os.getenv("PROBATION_ROLE_ID"))
 BOT_USER_ID = 1522945518932725810
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
@@ -41,6 +44,8 @@ def can_ban_target(author: discord.Member, target) -> bool:
 def log_channel(guild: discord.Guild):
     return guild.get_channel(LOG_CHANNEL_ID)
 
+def pro_log_channel(guild: discord.Guild):
+    return guild.get_channel(PROBATION_LOG_CHANNEL_ID)
 
 def base_embed(title, color):
     return discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
@@ -260,6 +265,33 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         await ch.send(embed=embed)
 
 
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    if message.guild and message.channel.id == PROBATION_CHANNEL_ID:
+        ch = pro_log_channel(message.guild)
+        if ch:
+            message_text = message.content or "(no content)"
+            embed = base_embed("Probation Message", discord.Color.orange())
+            embed.add_field(name="Author", value=f"<@{message.author.id}> ({message.author} - {message.author.id})", inline=False)
+            embed.add_field(name="Message", value=message_text, inline=False)
+            if len(message_text) > 4096:
+                message_text = message_text[:4093] + "..."
+            if message.attachments:
+                attachment_urls = "\n".join(attachment.url for attachment in message.attachments)
+                if len(attachment_urls) > 1024:
+                    attachment_urls = attachment_urls[:1021] + "..."
+                embed.add_field(
+                    name="Attachments",
+                    value=attachment_urls,
+                    inline=False,
+                )
+            await ch.send(embed=embed)
+
+    await bot.process_commands(message)
+
 
 @bot.command()
 async def ping(ctx):
@@ -296,6 +328,40 @@ async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
         pass
     await ctx.guild.kick(member, reason=reason)
     await ctx.send(f"Kicked {member} | Reason: {reason}")
+
+
+@bot.command()
+@commands.has_any_role(PROTECTED_ROLE_ID)
+async def probate(ctx, member: discord.Member):
+    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+    if role is None:
+        await ctx.reply("Probation role not found.")
+        return
+
+    try:
+        await member.add_roles(role, reason=f"Probated by {ctx.author}")
+    except discord.Forbidden:
+        await ctx.reply("I do not have permission to add that role.")
+        return
+
+    await ctx.reply(f"Probated {member}.")
+
+
+@bot.command()
+@commands.has_any_role(PROTECTED_ROLE_ID)
+async def unprobate(ctx, member: discord.Member):
+    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+    if role is None:
+        await ctx.reply("Probation role not found.")
+        return
+
+    try:
+        await member.remove_roles(role, reason=f"Unprobated by {ctx.author}")
+    except discord.Forbidden:
+        await ctx.reply("I do not have permission to remove that role.")
+        return
+
+    await ctx.reply(f"Unprobated {member}.")
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
