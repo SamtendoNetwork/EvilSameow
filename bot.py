@@ -24,6 +24,8 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 
 PROTECTED_ROLE_ID = int(os.getenv("PROTECTED_ROLE_ID"))
 IMMUNE_BYPASS_ROLE_ID = int(os.getenv("IMMUNE_BYPASS_ROLE_ID"))
+PROBATION_CHANNEL_ID = int(os.getenv("PROBATION_CHANNEL_ID"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 BOT_USER_ID = 1522945518932725810
 TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
@@ -259,6 +261,33 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         embed.add_field(name="After", value=after.nick or "(none)")
         await ch.send(embed=embed)
 
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    if message.guild and message.channel.id == PROBATION_CHANNEL_ID:
+        ch = log_channel(message.guild)
+        if ch:
+            message_text = message.content or "(no content)"
+            embed = base_embed("Probation Message", discord.Color.orange())
+            embed.add_field(name="Author", value=f"<@{message.author.id}> ({message.author} - {message.author.id})", inline=False)
+            embed.add_field(name="Message", value=message_text, inline=False)
+            if len(message_text) > 4096:
+                message_text = message_text[:4093] + "..."
+            if message.attachments:
+                attachment_urls = "\n".join(attachment.url for attachment in message.attachments)
+                if len(attachment_urls) > 1024:
+                    attachment_urls = attachment_urls[:1021] + "..."
+                embed.add_field(
+                    name="Attachments",
+                    value=attachment_urls,
+                    inline=False,
+                )
+            await ch.send(embed=embed)
+
+    await bot.process_commands(message)
 
 
 @bot.command()
