@@ -511,4 +511,25 @@ async def purge(ctx, limit: int):
     )
     await ctx.send(f"Purged {len(deleted)} message(s), I skipped any of my own", delete_after=5)
 
+# Tags!
+@bot.command()
+async def guide(ctx):
+    embed = discord.Embed(
+        title="Setting up Samtendo Network on Wii U",
+        description="https://guide.samtendo.net/",
+        color=discord.Color.from_str("#4ABFFF")
+    )
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def com(ctx):
+    embed = discord.Embed(
+        title="We are not affiliated with samtendo.com",
+        description="Our official website is https://samtendo.net. We are not and will not ever be affiliated with them.",
+        color=discord.Color.from_str("#FF0000")
+    )
+
+    await ctx.send(embed=embed)
+
 bot.run(TOKEN)
