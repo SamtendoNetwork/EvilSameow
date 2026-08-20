@@ -165,14 +165,31 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    welcome_channel = member.guild.system_channel
+    if welcome_channel is not None:
+        welcome_embed = discord.Embed(
+            title=f"A wild {member.name} arrives!",
+            description=(
+                # just the old one
+                "Welcome to Samtendo Network! Make sure to read the "
+                "https://discord.com/channels/1465775507034341439/1466171096729649226 "
+                "and chat with everyone else to get to know us!\n\n"
+                "**Get started today with Samtendo Network: https://guide.samtendo.net**"
+            ),
+            color=discord.Color.from_str("#4ABFFF"),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        welcome_embed.set_thumbnail(url="https://cdn.samtendo.net/images/NewSamtendoCircle.png")
+        await welcome_channel.send(content=member.mention, embed=welcome_embed)
+
     ch = log_channel(member.guild)
     if not ch:
         return
-    embed = base_embed("Member Joined", discord.Color.green())
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
-    embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, "R"))
-    await ch.send(embed=embed)
+    log_embed = base_embed("Member Joined", discord.Color.green())
+    log_embed.set_thumbnail(url=member.display_avatar.url)
+    log_embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
+    log_embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, "R"))
+    await ch.send(embed=log_embed)
 
 
 @bot.event
