@@ -6,6 +6,7 @@ import json
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
+from aiohttp import web
 
 load_dotenv()
 
@@ -154,8 +155,25 @@ def restore_timed_bans():
         queue_unban(guild, user, unban_time, reason)
 
 
+_awake_started = False
+
+async def handle_awake(request):
+    return web.Response(status=200, text="OK")
+
+async def start_awake_server():
+    app = web.Application()
+    app.router.add_get("/awake", handle_awake)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 20068)
+    await site.start()
+
 @bot.event
 async def on_ready():
+    global _awake_started
+    if not _awake_started:
+        await start_awake_server()
+        _awake_started = True
     global timed_bans_restored
     print(f"Logged in as {bot.user} ({bot.user.id})")
     if not timed_bans_restored:
