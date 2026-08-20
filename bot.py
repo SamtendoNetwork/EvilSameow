@@ -5,7 +5,7 @@ import datetime
 import json
 from dotenv import load_dotenv
 import os
-from requests import get
+import requests as req
 from supabase import create_client, Client
 from aiohttp import web
 
@@ -437,7 +437,7 @@ async def link(ctx, username: str = None, password: str = None):
         payload = {"grant_type": "password","username": username,"password": password}
         headerz = {"Content-Type": "application/json"}
         account_url = "https://api.samtendo.net/v1/login"
-        r = get(account_url, verify=False, json=payload, headers=headerz)
+        r = req.post(account_url, verify=False, json=payload, headers=headerz)
         if r.status_code == "200":
             await ctx.reply('Linking SNIDs is not implemented on Evil Sameow as of right now')
             return
