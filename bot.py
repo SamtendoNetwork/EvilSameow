@@ -5,6 +5,7 @@ import datetime
 import json
 from dotenv import load_dotenv
 import os
+from requests import get
 from supabase import create_client, Client
 from aiohttp import web
 
@@ -423,6 +424,32 @@ async def ban(ctx, user: discord.User, *, reason="No reason provided"):
     await ctx.guild.ban(user, reason=reason)
     await ctx.send(f"Banned {user} | Reason: {reason}")
 
+
+@bot.command()
+async def link(ctx, username: str = None, password: str = None):
+    if username is None:
+         await ctx.reply("Your request is missing the username")
+         return   
+    if password is None:
+         await ctx.reply("Your request is missing the password")
+         return  
+    try:
+        payload = {"grant_type": "password","username": username,"password": password}
+        headerz = {"Content-Type": "application/json"}
+        account_url = "https://api.samtendo.net/v1/login"
+        r = get(account_url, verify=False, json=payload, headers=headerz)
+        if r.status_code == "200":
+            await ctx.reply('Linking SNIDs is not implemented on Evil Sameow as of right now')
+            return
+        else:
+            await ctx.reply('Linking SNIDs is not implemented on Evil Sameow as of right now')
+            return
+    except discord.Forbidden:
+        pass
+        
+        
+
+    
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
