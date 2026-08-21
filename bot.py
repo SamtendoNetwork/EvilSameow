@@ -385,7 +385,7 @@ async def ban(ctx, user: discord.User, *, reason="No reason provided"):
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(user, reason=reason)
+    await ctx.guild.ban(user, reason=reason, delete_message_seconds=0)
     await ctx.send(f"Banned {user} | Reason: {reason}")
 
 
