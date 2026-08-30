@@ -403,7 +403,7 @@ async def on_message(message: discord.Message):
             if info:
                 embeds.append(build_error_code_embed(module, code, info))
         if embeds:
-            await message.channel.send(embeds=embeds)
+            await message.reply(embeds=embeds)
 
     await bot.process_commands(message)
 
