@@ -3,10 +3,12 @@ from discord.ext import commands
 import asyncio
 import datetime
 import json
+import re
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
 from aiohttp import web
+import aiohttp
 
 load_dotenv()
 
@@ -33,6 +35,7 @@ TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
 timed_bans_restored = False
 
+
 def can_ban_target(author: discord.Member, target) -> bool:
     if not isinstance(target, discord.Member):
         return True
@@ -45,8 +48,10 @@ def can_ban_target(author: discord.Member, target) -> bool:
 def log_channel(guild: discord.Guild):
     return guild.get_channel(LOG_CHANNEL_ID)
 
+
 def pro_log_channel(guild: discord.Guild):
     return guild.get_channel(PROBATION_LOG_CHANNEL_ID)
+
 
 def base_embed(title, color):
     return discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
@@ -157,8 +162,10 @@ def restore_timed_bans():
 
 _awake_started = False
 
+
 async def handle_awake(request):
     return web.Response(status=200, text="OK")
+
 
 async def start_awake_server():
     app = web.Application()
@@ -167,6 +174,70 @@ async def start_awake_server():
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 20068)
     await site.start()
+
+
+
+ERROR_CODE_PATTERN = re.compile(r"\b(\d{3})-(\d{4})\b")
+error_code_cache: dict[str, dict | None] = {}
+_http_session: "aiohttp.ClientSession | None" = None
+
+
+def get_http_session():
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
+async def fetch_error_code(module: str, code: str) -> dict | None:
+    cache_key = f"{module}-{code}"
+    if cache_key in error_code_cache:
+        return error_code_cache[cache_key]
+
+    url = f"https://raw.githubusercontent.com/SamtendoNetwork/error-codes/master/data/{module}/{code}/en_US.json"
+    session = get_http_session()
+    try:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                error_code_cache[cache_key] = None
+                return None
+            data = await resp.json(content_type=None)
+    except Exception:
+        return None
+
+    try:
+        info = data[module][code]
+    except (KeyError, TypeError):
+        error_code_cache[cache_key] = None
+        return None
+
+    error_code_cache[cache_key] = info
+    return info
+
+
+def build_error_code_embed(module: str, code: str, info: dict) -> discord.Embed:
+    full_code = f"{module}-{code}"
+    first_digit = module[0]
+    if first_digit == "0":
+        console = "3DS"
+        color = discord.Color.from_str("#D12228")
+    elif first_digit == "1":
+        console = "Wii U"
+        color = discord.Color.from_str("#0098C7")
+    else:
+        console = "Other"
+        color = discord.Color.from_str("#FFFFFF")
+
+    embed = discord.Embed(
+        title=f"{full_code} ({console})",
+        description="Information is WIP and may be incorrect",
+        color=color,
+    )
+    embed.add_field(name="Error Name", value=info.get("name", "Unknown"), inline=True)
+    embed.add_field(name="Error Description", value=info.get("short_description", "Unknown"), inline=True)
+    embed.add_field(name="Solution", value=info.get("short_solution", "Unknown solution"), inline=False)
+    return embed
+
 
 @bot.event
 async def on_ready():
@@ -188,7 +259,6 @@ async def on_member_join(member: discord.Member):
         welcome_embed = discord.Embed(
             title=f"A wild {member.name} arrives!",
             description=(
-                # just the old one
                 "Welcome to Samtendo Network! Make sure to read the "
                 "https://discord.com/channels/1465775507034341439/1466171096729649226 "
                 "and chat with everyone else to get to know us!\n\n"
@@ -325,6 +395,16 @@ async def on_message(message: discord.Message):
                 )
             await ch.send(embed=embed)
 
+    matches = ERROR_CODE_PATTERN.findall(message.content)
+    if matches:
+        embeds = []
+        for module, code in matches[:10]:
+            info = await fetch_error_code(module, code)
+            if info:
+                embeds.append(build_error_code_embed(module, code, info))
+        if embeds:
+            await message.channel.send(embeds=embeds)
+
     await bot.process_commands(message)
 
 
@@ -332,24 +412,25 @@ async def on_message(message: discord.Message):
 async def ping(ctx):
     await ctx.send("Pong!")
 
+
 @bot.command()
 async def meow(ctx):
-    if ctx.author.id == 1258819818887319658: # me :3
-        user = ctx.bot.get_user(415606064856301589) # aep
+    if ctx.author.id == 1258819818887319658:  # me :3
+        user = ctx.bot.get_user(415606064856301589)  # aep
         await user.send('Meow')
-        user = ctx.bot.get_user(1258819818887319658) # sam
+        user = ctx.bot.get_user(1258819818887319658)  # sam
         await user.send('Meow')
-        user = ctx.bot.get_user(1420061774165835938) # faz
+        user = ctx.bot.get_user(1420061774165835938)  # faz
         await user.send('Meow')
         await ctx.send("Meow")
     else:
         await ctx.send("lmao who are you")
 
 
-
 @bot.command()
 async def hi(ctx):
     await ctx.reply("wassup")
+
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
@@ -398,6 +479,7 @@ async def unprobate(ctx, member: discord.Member):
 
     await ctx.reply(f"Unprobated {member}.")
 
+
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user: discord.User, *, reason="No reason provided"):
@@ -407,6 +489,7 @@ async def unban(ctx, user: discord.User, *, reason="No reason provided"):
         return await ctx.send(f"{user} is not banned!")
     await ctx.guild.unban(user, reason=reason)
     await ctx.send(f"{user} is now unbanned. | Reason: {reason}")
+
 
 @bot.command()
 @commands.has_permissions(ban_members=True)
@@ -455,6 +538,7 @@ async def tban(ctx, user: discord.User, unban_at: str, *, reason="No reason prov
     queue_unban(ctx.guild, user, unban_time, reason)
     await ctx.send(f"Timed ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
 
+
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def hban(ctx, user: discord.User, *, reason="No reason provided"):
@@ -502,6 +586,7 @@ async def thban(ctx, user: discord.User, unban_at: str, *, reason="No reason pro
     queue_unban(ctx.guild, user, unban_time, reason)
     await ctx.send(f"Timed no appeal ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
 
+
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def kban(ctx, user: discord.User, *, reason="N/A"):
@@ -529,10 +614,12 @@ async def kban(ctx, user: discord.User, *, reason="N/A"):
     await ctx.guild.ban(user, reason=ban_reason)
     await ctx.send(f"Knowledgeban given to {user} | Reason: {ban_reason}")
 
+
 @bot.command()
 @commands.has_any_role(IMMUNE_BYPASS_ROLE_ID)
 async def speak(ctx, *, msg="Please provide a message to send."):
     await ctx.send(msg)
+
 
 @bot.command()
 @commands.has_any_role(PROTECTED_ROLE_ID)
@@ -546,6 +633,15 @@ async def purge(ctx, limit: int):
     )
     await ctx.send(f"Purged {len(deleted)} message(s), I skipped any of my own", delete_after=5)
 
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def loaderr(ctx):
+    cleared = len(error_code_cache)
+    error_code_cache.clear()
+    await ctx.send(f"Error code cache cleared ({cleared} entr{'y' if cleared == 1 else 'ies'} dropped). Codes will be refetched from GitHub on next mention.")
+
+
 # Tags!
 @bot.command()
 async def guide(ctx):
@@ -557,6 +653,7 @@ async def guide(ctx):
 
     await ctx.send(embed=embed)
 
+
 @bot.command()
 async def com(ctx):
     embed = discord.Embed(
@@ -566,5 +663,6 @@ async def com(ctx):
     )
 
     await ctx.send(embed=embed)
+
 
 bot.run(TOKEN)
