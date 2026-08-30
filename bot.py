@@ -35,6 +35,11 @@ TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
 timed_bans_restored = False
 
+PIRACY_REPORTS_CHANNEL_ID = 1510692904723546112
+PIRACY_PING_ROLE_ID = 1466886144292557025
+PIRACY_MOD_CHANNEL_ID = 1466887398704021689
+tree_synced = False
+
 
 def can_ban_target(author: discord.Member, target) -> bool:
     if not isinstance(target, discord.Member):
@@ -239,6 +244,56 @@ def build_error_code_embed(module: str, code: str, info: dict) -> discord.Embed:
     return embed
 
 
+@bot.tree.context_menu(name="Report Piracy")
+async def report_piracy(interaction: discord.Interaction, message: discord.Message):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    # 1) Reply to the reported message
+    reply_embed = discord.Embed(
+        title="Potential Piracy Reported",
+        description=(
+            "A user has flagged this message as potentially relating to piracy. "
+            "Samtendo Network does not support piracy of any kind. Please review Rule 5.\n\n"
+            f"If you have any questions, please ask moderators here: <#{PIRACY_MOD_CHANNEL_ID}>."
+        ),
+        color=discord.Color.from_str("#FF0000"),
+    )
+    try:
+        await message.reply(embed=reply_embed, mention_author=False)
+    except discord.HTTPException:
+        # Original message may have been deleted, or perms are missing in that channel
+        pass
+
+    # 2) Send report to the reports channel, pinging the mod role
+    reports_channel = interaction.guild.get_channel(
+        PIRACY_REPORTS_CHANNEL_ID
+    ) or await interaction.guild.fetch_channel(PIRACY_REPORTS_CHANNEL_ID)
+
+    content = message.content or "*[no text content \u2013 attachment/embed only]*"
+    if len(content) > 950:  # leave headroom for the quote formatting + field limit
+        content = content[:950] + "\u2026"
+
+    report_embed = discord.Embed(
+        title="Message flagged for piracy",
+        color=discord.Color.from_str("#FF0000"),
+    )
+    report_embed.add_field(name="Reporter", value=interaction.user.mention, inline=False)
+    report_embed.add_field(name="Message Author", value=message.author.mention, inline=False)
+    report_embed.add_field(name="Sent in", value=message.channel.mention, inline=False)
+    report_embed.add_field(name="Message content", value=f"> *{content}*", inline=False)
+
+    if message.jump_url:
+        report_embed.add_field(name="Jump to message", value=f"[Click here]({message.jump_url})", inline=False)
+
+    await reports_channel.send(
+        content=f"New report",
+        embed=report_embed,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+    )
+
+    await interaction.followup.send("Report submitted. Thank you.", ephemeral=True)
+
+
 @bot.event
 async def on_ready():
     global _awake_started
@@ -250,6 +305,15 @@ async def on_ready():
     if not timed_bans_restored:
         restore_timed_bans()
         timed_bans_restored = True
+
+    global tree_synced
+    if not tree_synced:
+        try:
+            synced = await bot.tree.sync()
+            print(f"Synced {len(synced)} application command(s).")
+        except discord.HTTPException as e:
+            print(f"Failed to sync application commands: {e}")
+        tree_synced = True
 
 
 @bot.event
