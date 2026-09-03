@@ -841,7 +841,7 @@ async def snid_link(interaction: discord.Interaction, username: str, password: s
 
 @snid_group.command(name="status", description="View your Samtendo Network ID status")
 async def snid_status(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    await interaction.response.defer(ephemeral=False, thinking=True)
     username = snid_links.get(str(interaction.user.id))
     if not username:
         await interaction.followup.send("You have not linked a Samtendo Network ID. Use `/snid link` first.", ephemeral=True)
