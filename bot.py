@@ -269,9 +269,9 @@ async def report_piracy(interaction: discord.Interaction, message: discord.Messa
         PIRACY_REPORTS_CHANNEL_ID
     ) or await interaction.guild.fetch_channel(PIRACY_REPORTS_CHANNEL_ID)
 
-    content = message.content or "*[no text content \u2013 attachment/embed only]*"
+    content = message.content or "*[no text content - attachment/embed only]*"
     if len(content) > 950:  # leave headroom for the quote formatting + field limit
-        content = content[:950] + "\u2026"
+        content = content[:950] + "..."
 
     report_embed = discord.Embed(
         title="Message flagged for piracy",
