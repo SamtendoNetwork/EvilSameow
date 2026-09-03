@@ -1,11 +1,16 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import asyncio
 import datetime
 import json
+import re
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
+from aiohttp import web
+import aiohttp
+from pymongo import MongoClient
 
 load_dotenv()
 
@@ -32,6 +37,17 @@ TIMED_BANS_PATH = os.path.join(os.path.dirname(__file__), "timed_bans.json")
 scheduled_unban_tasks = {}
 timed_bans_restored = False
 
+PIRACY_REPORTS_CHANNEL_ID = 1510692904723546112
+PIRACY_PING_ROLE_ID = 1466886144292557025
+PIRACY_MOD_CHANNEL_ID = 1466887398704021689
+tree_synced = False
+SNID_LINKS_PATH = os.path.join(os.path.dirname(__file__), "snid_links.json")
+MONGO_CLIENT = MongoClient("mongodb://localhost:27017/")
+MONGO_DB = MONGO_CLIENT["samtendoact90"]
+PNIDS_COLLECTION = MONGO_DB["pnids"]
+snid_links: dict[str, str] = {}
+
+
 def can_ban_target(author: discord.Member, target) -> bool:
     if not isinstance(target, discord.Member):
         return True
@@ -41,11 +57,21 @@ def can_ban_target(author: discord.Member, target) -> bool:
     return any(r.id == IMMUNE_BYPASS_ROLE_ID for r in author.roles)
 
 
+def is_staff(member: discord.Member) -> bool:
+    return isinstance(member, discord.Member) and any(r.id == PROTECTED_ROLE_ID for r in member.roles)
+
+
+def is_immune_bypass(member: discord.Member) -> bool:
+    return isinstance(member, discord.Member) and any(r.id == IMMUNE_BYPASS_ROLE_ID for r in member.roles)
+
+
 def log_channel(guild: discord.Guild):
     return guild.get_channel(LOG_CHANNEL_ID)
 
+
 def pro_log_channel(guild: discord.Guild):
     return guild.get_channel(PROBATION_LOG_CHANNEL_ID)
+
 
 def base_embed(title, color):
     return discord.Embed(title=title, color=color, timestamp=datetime.datetime.utcnow())
@@ -154,25 +180,179 @@ def restore_timed_bans():
         queue_unban(guild, user, unban_time, reason)
 
 
+_awake_started = False
+
+
+async def handle_awake(request):
+    return web.Response(status=200, text="OK")
+
+
+async def start_awake_server():
+    app = web.Application()
+    app.router.add_get("/awake", handle_awake)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 20068)
+    await site.start()
+
+
+ERROR_CODE_PATTERN = re.compile(r"\b(\d{3})-(\d{4})\b")
+error_code_cache: dict[str, dict | None] = {}
+_http_session: "aiohttp.ClientSession | None" = None
+
+
+def get_http_session():
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
+async def fetch_error_code(module: str, code: str) -> dict | None:
+    cache_key = f"{module}-{code}"
+    if cache_key in error_code_cache:
+        return error_code_cache[cache_key]
+
+    url = f"https://raw.githubusercontent.com/SamtendoNetwork/error-codes/master/data/{module}/{code}/en_US.json"
+    session = get_http_session()
+    try:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                error_code_cache[cache_key] = None
+                return None
+            data = await resp.json(content_type=None)
+    except Exception:
+        return None
+
+    try:
+        info = data[module][code]
+    except (KeyError, TypeError):
+        error_code_cache[cache_key] = None
+        return None
+
+    error_code_cache[cache_key] = info
+    return info
+
+
+def build_error_code_embed(module: str, code: str, info: dict) -> discord.Embed:
+    full_code = f"{module}-{code}"
+    first_digit = module[0]
+    if first_digit == "0":
+        console = "3DS"
+        color = discord.Color.from_str("#D12228")
+    elif first_digit == "1":
+        console = "Wii U"
+        color = discord.Color.from_str("#0098C7")
+    else:
+        console = "Other"
+        color = discord.Color.from_str("#FFFFFF")
+
+    embed = discord.Embed(
+        title=f"{full_code} ({console})",
+        description="Information is WIP and may be incorrect",
+        color=color,
+    )
+    embed.add_field(name="Error Name", value=info.get("name", "Unknown"), inline=True)
+    embed.add_field(name="Error Description", value=info.get("short_description", "Unknown"), inline=True)
+    embed.add_field(name="Solution", value=info.get("short_solution", "Unknown solution"), inline=False)
+    return embed
+
+
+@bot.tree.context_menu(name="Report Piracy")
+async def report_piracy(interaction: discord.Interaction, message: discord.Message):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    reply_embed = discord.Embed(
+        title="Potential Piracy Reported",
+        description=(
+            "A user has flagged this message as potentially relating to piracy. "
+            "Samtendo Network does not support piracy of any kind. Please review Rule 5.\n\n"
+            f"If you have any questions, please ask moderators here: <#{PIRACY_MOD_CHANNEL_ID}>."
+        ),
+        color=discord.Color.from_str("#FF0000"),
+    )
+    try:
+        await message.reply(embed=reply_embed, mention_author=False)
+    except discord.HTTPException:
+        pass
+    reports_channel = interaction.guild.get_channel(
+        PIRACY_REPORTS_CHANNEL_ID
+    ) or await interaction.guild.fetch_channel(PIRACY_REPORTS_CHANNEL_ID)
+
+    content = message.content or "*[no text content - attachment/embed only]*"
+    if len(content) > 950:
+        content = content[:950] + "..."
+
+    report_embed = discord.Embed(
+        title="Message flagged for piracy",
+        color=discord.Color.from_str("#FF0000"),
+    )
+    report_embed.add_field(name="Reporter", value=interaction.user.mention, inline=False)
+    report_embed.add_field(name="Message Author", value=message.author.mention, inline=False)
+    report_embed.add_field(name="Sent in", value=message.channel.mention, inline=False)
+    report_embed.add_field(name="Message content", value=f"> *{content}*", inline=False)
+
+    if message.jump_url:
+        report_embed.add_field(name="Jump to message", value=f"[Click here]({message.jump_url})", inline=False)
+
+    await reports_channel.send(
+        content=f"New report",
+        embed=report_embed,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+    )
+
+    await interaction.followup.send("Report submitted. Thank you.", ephemeral=True)
+
+
 @bot.event
 async def on_ready():
+    global _awake_started
+    load_snid_links()
+    if not _awake_started:
+        await start_awake_server()
+        _awake_started = True
     global timed_bans_restored
     print(f"Logged in as {bot.user} ({bot.user.id})")
     if not timed_bans_restored:
         restore_timed_bans()
         timed_bans_restored = True
 
+    global tree_synced
+    if not tree_synced:
+        try:
+            synced = await bot.tree.sync()
+            print(f"Synced {len(synced)} application command(s).")
+        except discord.HTTPException as e:
+            print(f"Failed to sync application commands: {e}")
+        tree_synced = True
+
 
 @bot.event
 async def on_member_join(member: discord.Member):
+    welcome_channel = member.guild.system_channel
+    if welcome_channel is not None:
+        welcome_embed = discord.Embed(
+            title=f"A wild {member.name} arrives!",
+            description=(
+                "Welcome to Samtendo Network! Make sure to read the "
+                "https://discord.com/channels/1465775507034341439/1466171096729649226 "
+                "and chat with everyone else to get to know us!\n\n"
+                "**Get started today with Samtendo Network: https://guide.samtendo.net**"
+            ),
+            color=discord.Color.from_str("#4ABFFF"),
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        welcome_embed.set_thumbnail(url="https://cdn.samtendo.net/images/NewSamtendoCircle.png")
+        await welcome_channel.send(content=member.mention, embed=welcome_embed)
+
     ch = log_channel(member.guild)
     if not ch:
         return
-    embed = base_embed("Member Joined", discord.Color.green())
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
-    embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, "R"))
-    await ch.send(embed=embed)
+    log_embed = base_embed("Member Joined", discord.Color.green())
+    log_embed.set_thumbnail(url=member.display_avatar.url)
+    log_embed.add_field(name="User", value=f"<@{member.id}> ({member} - {member.id})", inline=False)
+    log_embed.add_field(name="Account Created", value=discord.utils.format_dt(member.created_at, "R"))
+    await ch.send(embed=log_embed)
 
 
 @bot.event
@@ -290,225 +470,431 @@ async def on_message(message: discord.Message):
                 )
             await ch.send(embed=embed)
 
+    matches = ERROR_CODE_PATTERN.findall(message.content)
+    if matches:
+        embeds = []
+        for module, code in matches[:10]:
+            info = await fetch_error_code(module, code)
+            if info:
+                embeds.append(build_error_code_embed(module, code, info))
+        if embeds:
+            await message.reply(embeds=embeds)
+
     await bot.process_commands(message)
 
 
-@bot.command()
-async def ping(ctx):
-    await ctx.send("Pong!")
-
-@bot.command()
-async def meow(ctx):
-    if ctx.author.id == 1258819818887319658: # me :3
-        user = ctx.bot.get_user(415606064856301589) # aep
-        await user.send('Meow')
-        user = ctx.bot.get_user(1258819818887319658) # sam
-        await user.send('Meow')
-        user = ctx.bot.get_user(1420061774165835938) # faz
-        await user.send('Meow')
-        await ctx.send("Meow")
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, (app_commands.MissingPermissions, app_commands.MissingRole, app_commands.MissingAnyRole, app_commands.CheckFailure)):
+        msg = "You do not have permission to use this command."
     else:
-        await ctx.send("lmao who are you")
+        msg = "Something went wrong running that command."
+        print(f"App command error: {error}")
+
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
+@bot.tree.command(name="ping", description="Pong!")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!")
 
-@bot.command()
-async def hi(ctx):
-    await ctx.reply("wassup")
 
-@bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, member):
-        await ctx.reply("You do not have permission to kick this member.")
+@bot.tree.command(name="meow", description="Meow")
+async def meow(interaction: discord.Interaction):
+    if interaction.user.id == 1258819818887319658:  # me :3
+        user = bot.get_user(415606064856301589)  # aep
+        await user.send('Meow')
+        user = bot.get_user(1258819818887319658)  # sam
+        await user.send('Meow')
+        user = bot.get_user(1420061774165835938)  # faz
+        await user.send('Meow')
+        await interaction.response.send_message("Meow")
+    else:
+        await interaction.response.send_message("lmao who are you")
+
+
+@bot.tree.command(name="hi", description="Say hi")
+async def hi(interaction: discord.Interaction):
+    await interaction.response.send_message("wassup")
+
+
+@bot.tree.command(name="kick", description="Kick a member")
+@app_commands.describe(member="Member to kick", reason="Reason for the kick")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    if not can_ban_target(interaction.user, member):
+        await interaction.response.send_message("You do not have permission to kick this member.", ephemeral=True)
         return
     try:
-        await member.send(f"You have been kicked from **{ctx.guild.name}**.\nReason: {reason}")
+        await member.send(f"You have been kicked from **{interaction.guild.name}**.\nReason: {reason}")
     except discord.Forbidden:
         pass
-    await ctx.guild.kick(member, reason=reason)
-    await ctx.send(f"Kicked {member} | Reason: {reason}")
+    await interaction.guild.kick(member, reason=reason)
+    await interaction.response.send_message(f"Kicked {member} | Reason: {reason}")
 
 
-@bot.command()
-@commands.has_any_role(PROTECTED_ROLE_ID)
-async def probate(ctx, member: discord.Member):
-    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+@bot.tree.command(name="probate", description="Put a member on probation")
+@app_commands.describe(member="Member to probate")
+async def probate(interaction: discord.Interaction, member: discord.Member):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+
+    role = interaction.guild.get_role(PROBATION_ROLE_ID)
     if role is None:
-        await ctx.reply("Probation role not found.")
+        await interaction.response.send_message("Probation role not found.", ephemeral=True)
         return
 
     try:
-        await member.add_roles(role, reason=f"Probated by {ctx.author}")
+        await member.add_roles(role, reason=f"Probated by {interaction.user}")
     except discord.Forbidden:
-        await ctx.reply("I do not have permission to add that role.")
+        await interaction.response.send_message("I do not have permission to add that role.", ephemeral=True)
         return
 
-    await ctx.reply(f"Probated {member}.")
+    await interaction.response.send_message(f"Probated {member}.")
 
 
-@bot.command()
-@commands.has_any_role(PROTECTED_ROLE_ID)
-async def unprobate(ctx, member: discord.Member):
-    role = ctx.guild.get_role(PROBATION_ROLE_ID)
+@bot.tree.command(name="unprobate", description="Remove a member from probation")
+@app_commands.describe(member="Member to unprobate")
+async def unprobate(interaction: discord.Interaction, member: discord.Member):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+
+    role = interaction.guild.get_role(PROBATION_ROLE_ID)
     if role is None:
-        await ctx.reply("Probation role not found.")
+        await interaction.response.send_message("Probation role not found.", ephemeral=True)
         return
 
     try:
-        await member.remove_roles(role, reason=f"Unprobated by {ctx.author}")
+        await member.remove_roles(role, reason=f"Unprobated by {interaction.user}")
     except discord.Forbidden:
-        await ctx.reply("I do not have permission to remove that role.")
+        await interaction.response.send_message("I do not have permission to remove that role.", ephemeral=True)
         return
 
-    await ctx.reply(f"Unprobated {member}.")
+    await interaction.response.send_message(f"Unprobated {member}.")
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def unban(ctx, user: discord.User, *, reason="No reason provided"):
+
+@bot.tree.command(name="unban", description="Unban a user")
+@app_commands.describe(user="User to unban", reason="Reason for the unban")
+@app_commands.checks.has_permissions(ban_members=True)
+async def unban(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
     try:
-        await ctx.guild.fetch_ban(user)
+        await interaction.guild.fetch_ban(user)
     except discord.errors.NotFound:
-        return await ctx.send(f"{user} is not banned!")
-    await ctx.guild.unban(user, reason=reason)
-    await ctx.send(f"{user} is now unbanned. | Reason: {reason}")
+        await interaction.response.send_message(f"{user} is not banned!")
+        return
+    await interaction.guild.unban(user, reason=reason)
+    await interaction.response.send_message(f"{user} is now unbanned. | Reason: {reason}")
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, user: discord.User, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, user):
-        await ctx.reply("You do not have permission to ban this member.")
+
+@bot.tree.command(name="ban", description="Ban a user")
+@app_commands.describe(user="User to ban", reason="Reason for the ban")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
+    if not can_ban_target(interaction.user, user):
+        await interaction.response.send_message("You do not have permission to ban this member.", ephemeral=True)
         return
     apl = "You may appeal by emailing appeals@samtendo.net"
     try:
-        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+        await user.send(f"You have been banned from **{interaction.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(user, reason=reason)
-    await ctx.send(f"Banned {user} | Reason: {reason}")
+    await interaction.guild.ban(user, reason=reason, delete_message_seconds=0)
+    await interaction.response.send_message(f"Banned {user} | Reason: {reason}")
 
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def tban(ctx, user: discord.User, unban_at: str, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, user):
-        await ctx.reply("You do not have permission to ban this member.")
-        return
-
-    try:
-        unban_time = parse_iso8601_timestamp(unban_at)
-    except ValueError:
-        await ctx.reply("Please provide a valid ISO 8601 timestamp for the unban time.")
-        return
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if unban_time <= now:
-        await ctx.reply("The unban timestamp must be in the future.")
-        return
-
-    apl = "You may appeal by emailing appeals@samtendo.net"
-    try:
-        await user.send(
-            f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\nUnban time: {format_full_discord_timestamp(unban_time)}\n\n{apl}"
-        )
-    except discord.Forbidden:
-        pass
-
-    await ctx.guild.ban(user, reason=reason)
-    add_timed_ban_entry(ctx.guild.id, user.id, unban_time, reason, "tban")
-    queue_unban(ctx.guild, user, unban_time, reason)
-    await ctx.send(f"Timed ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
-
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def hban(ctx, user: discord.User, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, user):
-        await ctx.reply("You do not have permission to ban this member.")
+@bot.tree.command(name="hban", description="No-appeal ban a user")
+@app_commands.describe(user="User to ban", reason="Reason for the ban")
+@app_commands.checks.has_permissions(ban_members=True)
+async def hban(interaction: discord.Interaction, user: discord.User, reason: str = "No reason provided"):
+    if not can_ban_target(interaction.user, user):
+        await interaction.response.send_message("You do not have permission to ban this member.", ephemeral=True)
         return
     apl = "You may not appeal this ban."
     try:
-        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\n\n{apl}")
+        await user.send(f"You have been banned from **{interaction.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(user, reason=reason)
-    await ctx.send(f"No appeal ban given to {user} | Reason: {reason}")
+    await interaction.guild.ban(user, reason=reason)
+    await interaction.response.send_message(f"No appeal ban given to {user} | Reason: {reason}")
 
-
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def thban(ctx, user: discord.User, unban_at: str, *, reason="No reason provided"):
-    if not can_ban_target(ctx.author, user):
-        await ctx.reply("You do not have permission to ban this member.")
-        return
-
-    try:
-        unban_time = parse_iso8601_timestamp(unban_at)
-    except ValueError:
-        await ctx.reply("Please provide a valid ISO 8601 timestamp for the unban time.")
-        return
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if unban_time <= now:
-        await ctx.reply("The unban timestamp must be in the future.")
-        return
-
-    apl = "You may not appeal this ban."
-    try:
-        await user.send(
-            f"You have been banned from **{ctx.guild.name}**.\nReason: {reason}\nUnban time: {format_full_discord_timestamp(unban_time)}\n\n{apl}"
-        )
-    except discord.Forbidden:
-        pass
-
-    await ctx.guild.ban(user, reason=reason)
-    add_timed_ban_entry(ctx.guild.id, user.id, unban_time, reason, "thban")
-    queue_unban(ctx.guild, user, unban_time, reason)
-    await ctx.send(f"Timed no appeal ban given to {user} | Unban at: {format_full_discord_timestamp(unban_time)} | Reason: {reason}")
-
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def kban(ctx, user: discord.User, *, reason="N/A"):
-    if not can_ban_target(ctx.author, user):
-        await ctx.reply("You do not have permission to ban this member.")
-        return
-    apl = "You may appeal by emailing appeals@samtendo.net"
-    if reason == "N/A":
-        await ctx.reply("Please provide a knowledgeban reason.")
+@bot.tree.command(name="kban", description="Knowledgeban a user using a stored reason")
+@app_commands.describe(user="User to ban", reason="Knowledgeban shortcut reason")
+@app_commands.checks.has_permissions(ban_members=True)
+async def kban(interaction: discord.Interaction, user: discord.User, reason: str):
+    if not can_ban_target(interaction.user, user):
+        await interaction.response.send_message("You do not have permission to ban this member.", ephemeral=True)
         return
 
     result = supabase.table("kbans").select("full").eq("shortcut", reason).execute()
 
     if not result.data:
-        await ctx.reply("Please provide a valid knowledgeban reason. Otherwise, you should just ban them normally.")
+        await interaction.response.send_message("Please provide a valid knowledgeban reason. Otherwise, you should just ban them normally.", ephemeral=True)
         return
 
     ban_reason = result.data[0]["full"]
+    apl = "You may appeal by emailing appeals@samtendo.net"
 
     try:
-        await user.send(f"You have been banned from **{ctx.guild.name}**.\nReason: {ban_reason}\n\n{apl}")
+        await user.send(f"You have been banned from **{interaction.guild.name}**.\nReason: {ban_reason}\n\n{apl}")
     except discord.Forbidden:
         pass
 
-    await ctx.guild.ban(user, reason=ban_reason)
-    await ctx.send(f"Knowledgeban given to {user} | Reason: {ban_reason}")
+    await interaction.guild.ban(user, reason=ban_reason)
+    await interaction.response.send_message(f"Knowledgeban given to {user} | Reason: {ban_reason}")
 
-@bot.command()
-@commands.has_any_role(IMMUNE_BYPASS_ROLE_ID)
-async def speak(ctx, *, msg="Please provide a message to send."):
-    await ctx.send(msg)
 
-@bot.command()
-@commands.has_any_role(PROTECTED_ROLE_ID)
-async def purge(ctx, limit: int):
-    if limit < 1:
-        await ctx.reply("Please provide a valid number of messages to purge.")
+@bot.tree.command(name="speak", description="Make the bot say something")
+@app_commands.describe(msg="Message to send")
+async def speak(interaction: discord.Interaction, msg: str = "Please provide a message to send."):
+    if not is_immune_bypass(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return
-    deleted = await ctx.channel.purge(
-        limit=(limit + 1),
+    await interaction.response.send_message(msg)
+
+
+@bot.tree.command(name="purge", description="Purge messages from this channel")
+@app_commands.describe(limit="Number of messages to purge")
+async def purge(interaction: discord.Interaction, limit: int):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+    if limit < 1:
+        await interaction.response.send_message("Please provide a valid number of messages to purge.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    deleted = await interaction.channel.purge(
+        limit=limit,
         check=lambda message: message.author.id != BOT_USER_ID and not message.pinned,
     )
-    await ctx.send(f"Purged {len(deleted)} message(s), I skipped any of my own", delete_after=5)
+    await interaction.followup.send(f"Purged {len(deleted)} message(s), I skipped any of my own", ephemeral=True)
+
+
+@bot.tree.command(name="loaderr", description="Clear the error code cache")
+@app_commands.checks.has_permissions(administrator=True)
+async def loaderr(interaction: discord.Interaction):
+    cleared = len(error_code_cache)
+    error_code_cache.clear()
+    await interaction.response.send_message(f"Error code cache cleared ({cleared} entr{'y' if cleared == 1 else 'ies'} dropped). Codes will be refetched from GitHub on next mention.")
+
+
+@bot.tree.command(name="guide", description="Setting up Samtendo Network on Wii U")
+async def guide(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Setting up Samtendo Network on Wii U",
+        description="https://guide.samtendo.net/",
+        color=discord.Color.from_str("#4ABFFF")
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="com", description="We are not affiliated with samtendo.com")
+async def com(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="We are not affiliated with samtendo.com",
+        description="Our official website is https://samtendo.net. We are not and will not ever be affiliated with them.",
+        color=discord.Color.from_str("#FF0000")
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+warn_group = app_commands.Group(name="warn", description="Warning management")
+
+
+@warn_group.command(name="list", description="List a user's warns")
+@app_commands.describe(user="User to check warns for")
+async def warn_list(interaction: discord.Interaction, user: discord.User):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    result = supabase.table("warns").select("*").eq("user_id", user.id).order("created_at", desc=True).execute()
+
+    if not result.data:
+        await interaction.followup.send(f"{user.mention} has no warns.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"Warns for {user}",
+        color=discord.Color.orange(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    for entry in result.data:
+        staff_id = entry.get("staff_id")
+        created_at = entry.get("created_at")
+        try:
+            ts = discord.utils.format_dt(parse_iso8601_timestamp(str(created_at)), "F")
+        except (TypeError, ValueError):
+            ts = str(created_at)
+        embed.add_field(
+            name=f"Warn #{entry.get('warn_id')}",
+            value=f"**Reason:** {entry.get('reason', 'No reason provided')}\n**Staff:** <@{staff_id}>\n**Date:** {ts}",
+            inline=False,
+        )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@warn_group.command(name="give", description="Give a user a warn")
+@app_commands.describe(user="User to warn", reason="Reason for the warn")
+async def warn_give(interaction: discord.Interaction, user: discord.User, reason: str):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    supabase.table("warns").insert(
+        {
+            "user_id": user.id,
+            "staff_id": interaction.user.id,
+            "reason": reason,
+        }
+    ).execute()
+
+    try:
+        await user.send(f"You have been warned in **{interaction.guild.name}**.\nReason: {reason}")
+    except discord.Forbidden:
+        pass
+
+    await interaction.followup.send(f"Warned {user.mention} | Reason: {reason}")
+
+
+@warn_group.command(name="remove", description="Remove a warn by ID")
+@app_commands.describe(warn_id="ID of the warn to remove")
+async def warn_remove(interaction: discord.Interaction, warn_id: int):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    result = supabase.table("warns").select("*").eq("warn_id", warn_id).execute()
+    if not result.data:
+        await interaction.followup.send(f"No warn found with ID {warn_id}.")
+        return
+
+    supabase.table("warns").delete().eq("warn_id", warn_id).execute()
+    await interaction.followup.send(f"Removed warn #{warn_id}.")
+
+
+
+def load_snid_links() -> None:
+    global snid_links
+    if not os.path.exists(SNID_LINKS_PATH):
+        snid_links = {}
+        return
+    try:
+        with open(SNID_LINKS_PATH, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if isinstance(data, dict):
+            snid_links = {str(key): str(value) for key, value in data.items()}
+        else:
+            snid_links = {}
+    except (OSError, json.JSONDecodeError):
+        snid_links = {}
+
+
+def save_snid_links() -> None:
+    with open(SNID_LINKS_PATH, "w", encoding="utf-8") as file:
+        json.dump(snid_links, file, indent=2, ensure_ascii=True)
+
+
+async def snid_login(username: str, password: str) -> bool:
+    session = get_http_session()
+    try:
+        async with session.post(
+            "https://api.samtendo.net/v1/login",
+            json={
+                "grant_type": "password",
+                "username": username,
+                "password": password,
+            },
+        ) as response:
+            return response.status == 200
+    except aiohttp.ClientError:
+        return False
+
+
+async def get_pnid(username: str):
+    return await asyncio.to_thread(PNIDS_COLLECTION.find_one, {"username": username})
+
+
+snid_group = app_commands.Group(name="snid", description="Manage your Samtendo Network account")
+
+
+@snid_group.command(name="link", description="Link your Samtendo Network account")
+@app_commands.describe(username="Your Samtendo Network username", password="Your Samtendo Network password")
+async def snid_link(interaction: discord.Interaction, username: str, password: str):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    if not await snid_login(username, password):
+        await interaction.followup.send("Login failed. Please check your username and password.", ephemeral=True)
+        return
+    snid_links[str(interaction.user.id)] = username
+    save_snid_links()
+    await interaction.followup.send(f"Successfully linked **{username}**.", ephemeral=True)
+
+
+@snid_group.command(name="status", description="View your Samtendo Network ID status")
+async def snid_status(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    username = snid_links.get(str(interaction.user.id))
+    if not username:
+        await interaction.followup.send("You have not linked a Samtendo Network ID. Use `/snid link` first.", ephemeral=True)
+        return
+
+    document = await get_pnid(username)
+    if not document:
+        await interaction.followup.send("Your linked Samtendo Network ID could not be found.", ephemeral=True)
+        return
+
+    mii_data = document.get("mii")
+    access_level = document.get("access_level")
+    creation_date = document.get("creation_date")
+
+    access_labels = {
+        -1: "Banned",
+        0: "Regular User",
+        1: "Tester",
+        2: "Moderator",
+        3: "Developer",
+    }
+
+    try:
+        access_level_int = int(access_level)
+    except (TypeError, ValueError):
+        access_level_int = None
+
+    if access_level_int == -1:
+        access_text = "You are banned."
+    elif access_level_int in access_labels:
+        access_text = access_labels[access_level_int]
+    else:
+        access_text = str(access_level) if access_level is not None else "Unknown"
+
+    try:
+        creation_timestamp = discord.utils.format_dt(parse_iso8601_timestamp(str(creation_date)), "F")
+        creation_relative = discord.utils.format_dt(parse_iso8601_timestamp(str(creation_date)), "R")
+        creation_text = f"{creation_timestamp} ({creation_relative})"
+    except (TypeError, ValueError):
+        creation_text = str(creation_date) if creation_date is not None else "Unknown"
+
+    embed = discord.Embed(
+        title=f"Welcome back, {username}!",
+        color=discord.Color.from_str("#4ABFFF"),
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    embed.add_field(name="Access Level", value=access_text, inline=False)
+    embed.add_field(name="Creation Date", value=creation_text, inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+bot.tree.add_command(snid_group)
+
+bot.tree.add_command(warn_group)
 
 bot.run(TOKEN)
