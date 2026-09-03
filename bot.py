@@ -10,6 +10,7 @@ import os
 from supabase import create_client, Client
 from aiohttp import web
 import aiohttp
+from pymongo import MongoClient
 
 load_dotenv()
 
@@ -40,6 +41,11 @@ PIRACY_REPORTS_CHANNEL_ID = 1510692904723546112
 PIRACY_PING_ROLE_ID = 1466886144292557025
 PIRACY_MOD_CHANNEL_ID = 1466887398704021689
 tree_synced = False
+SNID_LINKS_PATH = os.path.join(os.path.dirname(__file__), "snid_links.json")
+MONGO_CLIENT = MongoClient("mongodb://localhost:27017/")
+MONGO_DB = MONGO_CLIENT["samtendoact90"]
+PNIDS_COLLECTION = MONGO_DB["pnids"]
+snid_links: dict[str, str] = {}
 
 
 def can_ban_target(author: discord.Member, target) -> bool:
@@ -301,6 +307,7 @@ async def report_piracy(interaction: discord.Interaction, message: discord.Messa
 @bot.event
 async def on_ready():
     global _awake_started
+    load_snid_links()
     if not _awake_started:
         await start_awake_server()
         _awake_started = True
@@ -774,6 +781,119 @@ async def warn_remove(interaction: discord.Interaction, warn_id: int):
     supabase.table("warns").delete().eq("warn_id", warn_id).execute()
     await interaction.followup.send(f"Removed warn #{warn_id}.")
 
+
+
+def load_snid_links() -> None:
+    global snid_links
+    if not os.path.exists(SNID_LINKS_PATH):
+        snid_links = {}
+        return
+    try:
+        with open(SNID_LINKS_PATH, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if isinstance(data, dict):
+            snid_links = {str(key): str(value) for key, value in data.items()}
+        else:
+            snid_links = {}
+    except (OSError, json.JSONDecodeError):
+        snid_links = {}
+
+
+def save_snid_links() -> None:
+    with open(SNID_LINKS_PATH, "w", encoding="utf-8") as file:
+        json.dump(snid_links, file, indent=2, ensure_ascii=True)
+
+
+async def snid_login(username: str, password: str) -> bool:
+    session = get_http_session()
+    try:
+        async with session.post(
+            "https://api.samtendo.net/v1/login",
+            json={
+                "grant_type": "password",
+                "username": username,
+                "password": password,
+            },
+        ) as response:
+            return response.status == 200
+    except aiohttp.ClientError:
+        return False
+
+
+async def get_pnid(username: str):
+    return await asyncio.to_thread(PNIDS_COLLECTION.find_one, {"username": username})
+
+
+snid_group = app_commands.Group(name="snid", description="Manage your Samtendo Network account")
+
+
+@snid_group.command(name="link", description="Link your Samtendo Network account")
+@app_commands.describe(username="Your Samtendo Network username", password="Your Samtendo Network password")
+async def snid_link(interaction: discord.Interaction, username: str, password: str):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    if not await snid_login(username, password):
+        await interaction.followup.send("Login failed. Please check your username and password.", ephemeral=True)
+        return
+    snid_links[str(interaction.user.id)] = username
+    save_snid_links()
+    await interaction.followup.send(f"Successfully linked **{username}**.", ephemeral=True)
+
+
+@snid_group.command(name="status", description="View your Samtendo Network ID status")
+async def snid_status(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    username = snid_links.get(str(interaction.user.id))
+    if not username:
+        await interaction.followup.send("You have not linked a Samtendo Network ID. Use `/snid link` first.", ephemeral=True)
+        return
+
+    document = await get_pnid(username)
+    if not document:
+        await interaction.followup.send("Your linked Samtendo Network ID could not be found.", ephemeral=True)
+        return
+
+    mii_data = document.get("mii")
+    access_level = document.get("access_level")
+    creation_date = document.get("creation_date")
+
+    access_labels = {
+        -1: "Banned",
+        0: "Regular User",
+        1: "Tester",
+        2: "Moderator",
+        3: "Developer",
+    }
+
+    try:
+        access_level_int = int(access_level)
+    except (TypeError, ValueError):
+        access_level_int = None
+
+    if access_level_int == -1:
+        access_text = "You are banned."
+    elif access_level_int in access_labels:
+        access_text = access_labels[access_level_int]
+    else:
+        access_text = str(access_level) if access_level is not None else "Unknown"
+
+    try:
+        creation_timestamp = discord.utils.format_dt(parse_iso8601_timestamp(str(creation_date)), "F")
+        creation_relative = discord.utils.format_dt(parse_iso8601_timestamp(str(creation_date)), "R")
+        creation_text = f"{creation_timestamp} ({creation_relative})"
+    except (TypeError, ValueError):
+        creation_text = str(creation_date) if creation_date is not None else "Unknown"
+
+    embed = discord.Embed(
+        title=f"Welcome back, {username}!",
+        color=discord.Color.from_str("#4ABFFF"),
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+    )
+    embed.add_field(name="Access Level", value=access_text, inline=False)
+    embed.add_field(name="Creation Date", value=creation_text, inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+bot.tree.add_command(snid_group)
 
 bot.tree.add_command(warn_group)
 
