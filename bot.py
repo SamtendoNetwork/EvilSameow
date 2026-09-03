@@ -248,7 +248,6 @@ def build_error_code_embed(module: str, code: str, info: dict) -> discord.Embed:
 async def report_piracy(interaction: discord.Interaction, message: discord.Message):
     await interaction.response.defer(ephemeral=True, thinking=True)
 
-    # 1) Reply to the reported message
     reply_embed = discord.Embed(
         title="Potential Piracy Reported",
         description=(
@@ -261,16 +260,13 @@ async def report_piracy(interaction: discord.Interaction, message: discord.Messa
     try:
         await message.reply(embed=reply_embed, mention_author=False)
     except discord.HTTPException:
-        # Original message may have been deleted, or perms are missing in that channel
         pass
-
-    # 2) Send report to the reports channel, pinging the mod role
     reports_channel = interaction.guild.get_channel(
         PIRACY_REPORTS_CHANNEL_ID
     ) or await interaction.guild.fetch_channel(PIRACY_REPORTS_CHANNEL_ID)
 
     content = message.content or "*[no text content - attachment/embed only]*"
-    if len(content) > 950:  # leave headroom for the quote formatting + field limit
+    if len(content) > 950:
         content = content[:950] + "..."
 
     report_embed = discord.Embed(
