@@ -598,7 +598,7 @@ async def ban(interaction: discord.Interaction, user: discord.User, reason: str 
     if not can_ban_target(interaction.user, user):
         await interaction.response.send_message("You do not have permission to ban this member.", ephemeral=True)
         return
-    apl = "You may appeal by emailing appeals@samtendo.net"
+    apl = "You may appeal on [the forum](https://forum.samtendo.net) by clicking *Submit ban appeal* on the left hand side"
     try:
         await user.send(f"You have been banned from **{interaction.guild.name}**.\nReason: {reason}\n\n{apl}")
     except discord.Forbidden:
@@ -639,7 +639,7 @@ async def kban(interaction: discord.Interaction, user: discord.User, reason: str
         return
 
     ban_reason = result.data[0]["full"]
-    apl = "You may appeal by emailing appeals@samtendo.net"
+    apl = "You may appeal on [the forum](https://forum.samtendo.net) by clicking *Submit ban appeal* on the left hand side"
 
     try:
         await user.send(f"You have been banned from **{interaction.guild.name}**.\nReason: {ban_reason}\n\n{apl}")
