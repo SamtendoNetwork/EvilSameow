@@ -337,7 +337,9 @@ async def on_member_join(member: discord.Member):
                 "Welcome to Samtendo Network! Make sure to read the "
                 "https://discord.com/channels/1465775507034341439/1466171096729649226 "
                 "and chat with everyone else to get to know us!\n\n"
-                "**Get started today with Samtendo Network: https://guide.samtendo.net**"
+                "**Get started today with Samtendo Network: https://guide.samtendo.net**\n"
+                "**Chat with us on the forum: https://forum.samtendo.net**\n"
+                "**Help us out by donating: https://samtendo.net/donate**\n"
             ),
             color=discord.Color.from_str("#4ABFFF"),
             timestamp=datetime.datetime.now(datetime.timezone.utc)
