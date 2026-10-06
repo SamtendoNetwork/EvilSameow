@@ -705,6 +705,14 @@ async def com(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="r15", description="No Drama")
+async def com(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Rule 15",
+        description="Rule 15 is No Drama. Here at Samtendo Network we try to maintain a very chilled out atmosphere where people can just have fun. Please do not cause, bring in or prolong drama. We apologise for being heavily strict on this rule, but a peaceful environment is something we stand by.",
+        color=discord.Color.from_str("#FF0000")
+    )
+    await interaction.response.send_message(embed=embed)
 
 warn_group = app_commands.Group(name="warn", description="Warning management")
 
