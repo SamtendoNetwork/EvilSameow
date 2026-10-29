@@ -506,10 +506,10 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="meow", description="Meow")
 async def meow(interaction: discord.Interaction):
-    if interaction.user.id == 1258819818887319658:  # me :3
+    if interaction.user.id == 240669346349711360:  # me :3
         user = bot.get_user(415606064856301589)  # aep
         await user.send('Meow')
-        user = bot.get_user(1258819818887319658)  # sam
+        user = bot.get_user(240669346349711360)  # sam
         await user.send('Meow')
         user = bot.get_user(1420061774165835938)  # faz
         await user.send('Meow')
