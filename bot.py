@@ -907,4 +907,27 @@ bot.tree.add_command(snid_group)
 
 bot.tree.add_command(warn_group)
 
+@bot.tree.command(name="games", description="Show the games list")
+async def games(interaction: discord.Interaction):
+    game_list = [
+        "Animal Crossing: New Leaf",
+        "Animal Crossing: New Leaf - Welcome Amiibo",
+        "Super Mario Maker",
+        "Mario Kart 8",
+        "Splatoon",
+        "Super Smash Bros. for Wii U",
+        "Super Smash Bros. for Nintendo 3DS",
+        "Team Kirby Clash Deluxe",
+        "Wii Sports Club",
+        "Wii U Chat",
+        "Sonic & All Stars Racing Transformed"
+    ]
+    embed = discord.Embed(
+        title="Games we support",
+        description="\n".join(f"- {game}" for game in game_list),
+        color=discord.Color.from_str("#4ABFFF"),
+    )
+    await interaction.response.send_message(embed=embed)
+
+
 bot.run(TOKEN)
