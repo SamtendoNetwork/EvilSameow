@@ -920,7 +920,7 @@ async def games(interaction: discord.Interaction):
         "Team Kirby Clash Deluxe",
         "Wii Sports Club",
         "Wii U Chat",
-        "Sonic & All Stars Racing Transformed"
+        "Sonic & All-Stars Racing Transformed"
     ]
     embed = discord.Embed(
         title="Games we support",
